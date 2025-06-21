@@ -1,16 +1,19 @@
 package model
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"one-api/common"
 	"one-api/constant"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/glebarez/sqlite"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -114,6 +117,16 @@ func CheckSetup() {
 	}
 }
 
+func extractTiDBHostname(connectionString string) (string, error) {
+	// 正则表达式匹配 host:port 部分
+	re := regexp.MustCompile(`@tcp\(([^:]+):\d+\)`)
+	matches := re.FindStringSubmatch(connectionString)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("hostname not found in the connection string")
+	}
+	return matches[1], nil
+}
+
 func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 	defer func() {
 		initCol()
@@ -148,6 +161,23 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 		}
 		// Use MySQL
 		common.SysLog("using MySQL as database")
+
+		// Use TiDB
+		if strings.Contains(dsn, "tidbcloud.com") {
+			common.SysLog("using TiDB as MySQL database")
+			tidbHostname, err := extractTiDBHostname(dsn)
+			if err != nil {
+				return nil, err
+			}
+			err = mysqldriver.RegisterTLSConfig("tidb", &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				ServerName: tidbHostname,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		// check parseTime
 		if !strings.Contains(dsn, "parseTime") {
 			if strings.Contains(dsn, "?") {
